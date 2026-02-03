@@ -1,0 +1,11 @@
+# ============================================
+# ROS2 Package Dependencies
+# ============================================
+# This file defines external ROS2 packages required for the project.
+# Use with: vcs import < dependencies.repos
+
+repositories:
+  ros2_ws/src/px4_msgs:
+    type: git
+    url: https://github.com/PX4/px4_msgs.git
+    version: main

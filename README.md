@@ -2,6 +2,58 @@
 
 > **Deep Reinforcement Learning based UAV Navigation in Hostile Environments**
 
+## 📋 목차 (Table of Contents)
+- [개요](#1-개요-overview)
+- [설치 가이드](#설치-installation)
+- [프로젝트 구조](#프로젝트-구조-project-structure)
+- [개발 환경](#2-개발-환경-development-environment)
+- [시나리오 및 위협 정의](#3-시나리오-및-위협-정의-scenario--threat)
+- [강화학습 설계](#4-강화학습-설계-rl-design)
+- [개발 로드맵](#6-개발-로드맵-roadmap)
+
+---
+
+## 📦 설치 (Installation)
+
+자세한 설치 가이드는 [INSTALL.md](INSTALL.md)를 참고하세요.
+
+**빠른 시작:**
+```bash
+git clone https://github.com/YOUR_USERNAME/air_defense_evasion_drone_project.git
+cd air_defense_evasion_drone_project
+./setup_environment.sh
+```
+
+---
+
+## 📂 프로젝트 구조 (Project Structure)
+
+```
+air_defense_evasion_drone_project/
+├── README.md                      # 프로젝트 개요
+├── INSTALL.md                     # 설치 가이드
+├── .gitignore                     # Git 제외 파일 목록
+├── requirements.txt               # Python 의존성
+├── dependencies.repos             # ROS2 외부 패키지
+├── setup_environment.sh           # 자동 환경 설정 스크립트
+│
+├── ros2_ws/                       # ROS2 워크스페이스
+│   └── src/
+│       └── flight_control/        # 비행 제어 패키지
+│           └── offboard_test.py   # Offboard 제어 테스트
+│
+├── models/                        # Gazebo 모델 (향후)
+├── gazebo_worlds/                 # 시뮬레이션 월드 (향후)
+└── rl_training/                   # 강화학습 코드 (향후)
+```
+
+**제외된 대형 의존성 (로컬 전용):**
+- `Micro-XRCE-DDS-Agent/` - PX4-ROS2 브릿지
+- `PX4-Autopilot/` - PX4 SITL
+- `ros2_ws/src/px4_msgs/` - dependencies.repos로 관리
+
+---
+
 ## 1. 개요 (Overview)
 본 프로젝트는 **연발 방공망(Anti-Aircraft Artillery)의 위협 하에서 생존하며 목표를 타격하는 자율 비행 드론**을 개발하는 것을 목표로 합니다.
 
