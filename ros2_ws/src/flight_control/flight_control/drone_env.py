@@ -12,7 +12,11 @@ from std_msgs.msg import Float32MultiArray
 class DroneEnv(gym.Env):
     def __init__(self):
         super(DroneEnv, self).__init__()
-        
+        # 300스탭 안에 목표에 도달하지 못하면 죽음
+        # 목표 도달 시 100점, 죽으면 -100점
+        # 드론을 재촉하는 용도
+        self.max_steps = 300
+        self.steps = 0
         # 1. ROS2 노드 초기화 (Env가 곧 Node 역할을 겸함)
         if not rclpy.ok():
             rclpy.init()
@@ -34,6 +38,9 @@ class DroneEnv(gym.Env):
         # [Observation] 데이터 수신
         self.sub_odom = self.node.create_subscription(VehicleOdometry, '/fmu/out/vehicle_odometry', self.odom_cb, qos_profile)
         self.sub_threat = self.node.create_subscription(Float32MultiArray, '/turret/threat_info', self.threat_cb, 10)
+        self.sub_status = self.node.create_subscription(VehicleStatus, '/fmu/out/vehicle_status_v1', self.status_cb, qos_profile)
+        self.nav_state = 0
+        self.arming_state = 0
 
         # 4. 변수 초기화
         self.current_pos = np.zeros(3)
@@ -58,88 +65,137 @@ class DroneEnv(gym.Env):
 
     def threat_cb(self, msg):
         self.threat_data = np.array(msg.data)
+    
+    def status_cb(self, msg):
+        self.nav_state = msg.nav_state
+        self.arming_state = msg.arming_state
 
     # --- Gym Methods ---
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         
-        print(">>> Resetting & Auto-Takeoff...")
+        print("\n>>> Resetting Environment...")
         
         # 0. 변수 초기화
         self.current_pos = np.zeros(3)
         self.current_vel = np.zeros(3)
+        self.nav_state = 0
+        self.arming_state = 0
+
+        # 중요: 상태 정보가 들어올 때까지 충분히 대기
+        print(">>> Waiting for initial state...")
+        time.sleep(0.5)  # 최소 0.5초 대기
+        for _ in range(20):  # 2초 동안 상태 수신
+            rclpy.spin_once(self.node, timeout_sec=0.1)
+        print(f">>> Initial State - Nav: {self.nav_state}, Arm: {self.arming_state}")
+
+        # ---------------------------------------------------------
+        # 1. Offboard 모드 전환 및 시동 (3단계 로직)
+        # ---------------------------------------------------------
         
-        # 1. 아까 만든 Arming 로직 (시동 걸기)
-        armed = False
+        # Phase 1: Offboard Heartbeat 전송 (최소 2초 필요)
+        print(">>> Phase 1: Sending Offboard heartbeat for 2 seconds...")
+        for i in range(20):  # 2초
+            self._publish_offboard_control_mode()
+            self._publish_trajectory_setpoint([0.0, 0.0, 0.0])
+            rclpy.spin_once(self.node, timeout_sec=0.1)
+        
+        # Phase 2: Offboard 모드 전환
+        print(">>> Phase 2: Switching to Offboard mode...")
+        self._publish_vehicle_command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
+        
+        # Offboard 모드 확인 (최대 5초 대기)
         for i in range(50):
-            self._publish_velocity([0.0, 0.0, 0.0])
-            self._publish_vehicle_command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
-            self._publish_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0)
+            self._publish_offboard_control_mode()
+            self._publish_trajectory_setpoint([0.0, 0.0, 0.0])
             rclpy.spin_once(self.node, timeout_sec=0.1)
             
-            if self.nav_state == 14 and self.arming_state == 2:
-                armed = True
+            if self.nav_state == 14:
+                print(f">>> Offboard mode activated! (Attempt: {i})")
                 break
         
-        if not armed:
-            print(">>> Arming Failed. Retrying...")
-            return self.reset(seed=seed) # 재귀 호출로 다시 시도
-
-        # ---------------------------------------------------------
-        # [추가된 핵심] 2. 강제 이륙 (공중 2m까지 올리기)
-        # ---------------------------------------------------------
-        print(">>> Taking off to 2.0m...")
-        takeoff_start = time.time()
+        if self.nav_state != 14:
+            print(">>> Offboard mode switch failed. Retrying...")
+            return self.reset(seed=seed)
         
-        # 높이가 1.8m(-1.8)에 도달할 때까지 강제로 상승 명령
-        while self.current_pos[2] > -1.8: 
-            # 상승 속도 -1.0 m/s
-            self._publish_velocity([0.0, 0.0, -1.0]) 
+        # Phase 3: Arming
+        print(">>> Phase 3: Arming...")
+        self._publish_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0)
+        
+        # Arming 확인 (최대 5초 대기)
+        for i in range(50):
+            self._publish_offboard_control_mode()
+            self._publish_trajectory_setpoint([0.0, 0.0, 0.0])
             rclpy.spin_once(self.node, timeout_sec=0.1)
             
-            # 혹시 5초 넘게 못 뜨면 리셋 (무한루프 방지)
-            if time.time() - takeoff_start > 5.0:
-                print(">>> Takeoff Timeout!")
-                return self.reset(seed=seed)
+            if self.arming_state == 2:
+                print(f">>> Armed successfully! (Attempt: {i})")
+                break
+        
+        # 최종 확인
+        if self.nav_state != 14 or self.arming_state != 2:
+            print(f">>> Arming Failed - Nav: {self.nav_state}, Arm: {self.arming_state}. Retrying...")
+            return self.reset(seed=seed)
 
-        print(">>> Ready to Fly! Handing over control to AI.")
+        # ---------------------------------------------------------
+        # 2. 강제 이륙 (Auto-Takeoff) - 공중 2m까지
+        # ---------------------------------------------------------
+        print(">>> Auto-Takeoff to 2.0m...")
+        takeoff_start = time.time()
+        
+        while self.current_pos[2] > -1.8: # NED 좌표계: 위쪽이 음수
+            # 상승 속도 -1.0 m/s
+            self._publish_offboard_control_mode() # Heartbeat
+            self._publish_trajectory_setpoint([0.0, 0.0, -1.0]) # Velocity Z = -1.0 (Up)
+            
+            rclpy.spin_once(self.node, timeout_sec=0.1)
+            
+            # 5초 타임아웃
+            if time.time() - takeoff_start > 5.0:
+                print(">>> Takeoff Timeout! Retrying...")
+                return self.reset(seed=seed)
+        self.steps = 0
+        print(">>> Ready to Fly! Handing over control to AI.\n")
         return self._get_obs(), {}
 
     def step(self, action):
-        # 1. Action 수행 (속도 명령 전송)
-        # Action값(-1~1)을 실제 속도(m/s)로 변환 (예: 최대 10m/s)
+        # 1. Heartbeat (필수)
+        self._publish_offboard_control_mode()
+        
+        # 2. Action 수행 (속도 명령 전송)
         real_action = action * 10.0 
-        self._publish_velocity(real_action)
+        self._publish_trajectory_setpoint(real_action) # 함수 이름 변경됨
 
-        # 2. ROS2 통신 업데이트 (중요: 데이터를 받을 때까지 잠깐 기다림)
-        # spin_once를 여러 번 호출하여 콜백을 처리
+        # 3. ROS2 통신 업데이트
         rclpy.spin_once(self.node, timeout_sec=self.dt)
 
-        # 3. Observation 가져오기
+        # 4. Observation 가져오기
         obs = self._get_obs()
 
-        # 4. 보상 계산 (Reward Function)
+        # 5. 보상 계산
+        self.steps += 1
         reward = 0.0
         done = False
         truncated = False
         
-        # (1) 목표와의 거리
         dist_to_target = np.linalg.norm(self.target_pos - self.current_pos)
+        reward -= dist_to_target * 0.1 # penality ratio
         
-        # (2) 보상: 목표에 가까울수록 좋음 (거리 페널티)
-        reward -= dist_to_target * 0.01 
-        
-        # (3) 종료 조건
-        if dist_to_target < 2.0: # 목표 도달
+        if dist_to_target < 2.0:
             reward += 100.0
             done = True
             print("Target Reached!")
         
-        # 땅에 박으면 종료 (z는 위쪽이 음수, 땅은 0 근처)
-        if self.current_pos[2] > 0.5: # 땅보다 아래(실제론 양수)면 추락으로 간주
+        if self.current_pos[2] > 0.5:
              reward -= 100.0
              done = True
              print("Crashed!")
+             
+        elif self.steps >= self.max_steps:
+            done = True
+            truncated = True # 시간 초과로 인한 종료임을 명시
+            reward -= 50.0   # 시간 초과 페널티 (게으름 벌점)
+            # print("Time Out!") # 로그 너무 많이 뜨면 주석 처리
 
         return obs, reward, done, truncated, {}
 
@@ -158,10 +214,7 @@ class DroneEnv(gym.Env):
         msg.timestamp = int(self.node.get_clock().now().nanoseconds / 1000)
         self.pub_offboard_mode.publish(msg)
 
-    def _publish_velocity(self, vel):
-        # Heartbeat (필수)
-        self._publish_offboard_control_mode()
-        
+    def _publish_trajectory_setpoint(self, vel):
         msg = TrajectorySetpoint()
         msg.position = [float('nan')]*3
         msg.velocity = [float(vel[0]), float(vel[1]), float(vel[2])]
