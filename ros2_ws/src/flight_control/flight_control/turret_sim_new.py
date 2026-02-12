@@ -1,3 +1,4 @@
+#TODO : drone_env.py 에 turret_sim_new.py 적용
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy

@@ -92,29 +92,60 @@ air_defense_evasion_drone_project/
 
 ### 3.2. 적 위협: 자동 추적 대공포 (Auto-Tracking Turret)
 드론을 격추하기 위해 설계된 가상의 대공 기관포입니다.
-* **사격 로직 (Lead Shot):** 드론의 현재 위치와 속도를 계산하여, 탄착 시간에 드론이 있을 것으로 **예상되는 지점**을 향해 사격.
+
+#### **투사체 물리 시스템 (Projectile Physics)**
+기존의 히트스캔(즉시 명중) 방식 대신, **실제 총알이 물리적으로 날아가는 시스템**을 구현합니다.
+
+* **조준 로직 (Perfect Lead Shot):**
+    * 드론의 현재 위치와 속도를 기반으로 미래 위치를 완벽하게 예측
+    * 터렛의 회전 속도는 무한대로 가정 (즉시 조준 가능)
+    * 하지만 총알이 날아가는 동안 드론이 기동하면 빗나감
+
+* **총알 물리:**
+    * 각 총알은 3D 공간에서 독립적으로 비행
+    * 위치 업데이트: `P_new = P_old + V * dt`
+    * 중력 무시 (단순화)
+    * 지면 충돌 시 소멸 (`z >= 0` in NED)
+
 * **무기 제원:**
-    * **발사 속도:** 600 RPM (0.1초당 1발).
-    * **탄속:** 초기 학습 시 $300m/s$ $\rightarrow$ 최종 $850m/s$ (Curriculum Learning).
-    * **탄퍼짐:** 완벽한 명중률 대신 약간의 분산(Dispersion)을 적용하여 화망 형성.
+    * **발사 속도:** 120 RPM (0.5초당 1발) → 600 RPM (최종 목표)
+    * **탄속:** 초기 학습 시 $50m/s$ → 중간 $200m/s$ → 최종 $850m/s$ (Curriculum Learning)
+    * **사거리:** 100m
+    * **피격 판정:** 총알과 드론 간 거리 < 0.5m
+
+#### **회피 전략 (Evasion Tactics)**
+드론은 다음과 같은 전략을 학습해야 합니다:
+1. **예측 불가능한 움직임:** 일정 속도 직선 비행 시 100% 명중 → 불규칙한 가감속과 방향 전환 필요
+2. **탄도 인식:** 날아오는 총알의 위치와 속도를 관측하여 위험도 판단
+3. **타이밍 기동:** 총알이 가까워지는 순간 급기동(Jinking)으로 회피
+4. **화망 돌파:** 여러 총알이 동시에 날아올 때 틈새를 찾아 통과
 
 ---
 
 ## 4. 강화학습 설계 (RL Design)
 
 ### 4.1. 관측 공간 (Observation Space)
-드론은 비전 센서를 통해 **적의 형상(총구 방향)**을 인식한다고 가정합니다. 날아오는 총알(투사체)의 개별 위치는 알 수 없습니다.
+드론은 센서를 통해 **날아오는 총알의 실시간 위치와 속도**를 인식합니다.
 
 1.  **Target Info (목표 정보):**
-    * 목표 지점까지의 상대 위치 벡터 $(x, y, z)$.
+    * 목표 지점까지의 상대 위치 벡터 $(x, y, z)$ - 3D
+
 2.  **Self State (자신 정보):**
-    * 현재 선속도(Linear Velocity) 벡터 $(v_x, v_y, v_z)$.
-    * (쿼드콥터의 물리적 한계 내에 있는 값).
-3.  **Threat Info (위협 정보):**
-    * **Turret Relative Position:** 적 포탑의 상대 위치.
-    * **Turret Aim Vector:** **현재 적의 총구가 향하고 있는 방향 단위 벡터.**
+    * 현재 선속도(Linear Velocity) 벡터 $(v_x, v_y, v_z)$ - 3D
+    * (쿼드콥터의 물리적 한계 내에 있는 값)
+
+3.  **Bullet Info (총알 정보) - 가변 길이:**
+    * 각 총알마다 6개 데이터: `[pos_x, pos_y, pos_z, vel_x, vel_y, vel_z]`
+    * 최대 N개의 총알 추적 (N=10~20)
+    * 총알이 없으면 0으로 패딩
     
-    > **💡 전략 포인트:** 에이전트는 `Aim Vector`가 자신의 미래 경로와 일치할 때(Lock-on), 속도나 방향을 급격히 바꾸는 기동을 학습해야 함.
+    > **💡 전략 포인트:** 
+    > - 총알의 **현재 위치**와 **속도 벡터**를 이용해 미래 궤적 예측
+    > - 드론과의 **최근접 거리(CPA)** 계산
+    > - 위험한 총알(가까운 것)과 안전한 총알(먼 것) 구분
+    > - 선분 교차 판정으로 충돌 시간 예측
+
+**관측 공간 차원:** `3 + 3 + (N * 6)` where N = 최대 총알 개수
 
 ### 4.2. 행동 공간 (Action Space)
 PPO 알고리즘 적용을 위해 **연속적인(Continuous) 값**을 사용합니다.
@@ -128,17 +159,33 @@ PPO 알고리즘 적용을 위해 **연속적인(Continuous) 값**을 사용합�
 ### 4.3. 보상 함수 (Reward Function)
 목표 달성 여부와 효율성을 기반으로 보상을 부여합니다.
 
-$$R_{total} = R_{terminal} + R_{efficiency}$$
+$$R_{total} = R_{terminal} + R_{efficiency} + R_{safety}$$
 
 1.  **Terminal Reward (종료 보상):**
-    * **성공(Success):** 목표 반경 $1m$ 이내 도달 시 `+100`.
+    * **성공(Success):** 목표 반경 $2m$ 이내 도달 시 `+100`
     * **실패(Fail):**
-        * 투사체 피격 시 `-100`.
-        * 지면 충돌(Crash) 시 `-100`.
-        * 구역 이탈(Out of bound) 시 `-100`.
+        * **투사체 피격:** 총알과의 거리 < 0.5m → `-100` (즉시 종료)
+        * **지면 충돌:** z ≥ 0 (NED) → `-100` (즉시 종료)
+        * **구역 이탈:** 맵 경계 벗어남 → `-100` (즉시 종료)
+
 2.  **Efficiency Reward (효율성 보상):**
-    * **시간 페널티:** 매 스텝마다 미세한 마이너스 보상 (최단 시간 유도).
-    * **접근 보상:** 목표물과의 거리가 줄어들면 비례하여 보상 지급 (Sparse reward 문제 해결).
+    * **시간 페널티:** 매 스텝마다 `-0.1` (최단 시간 유도)
+    * **접근 보상:** 목표와의 거리가 줄어들면 `+거리_감소 * 0.5`
+
+3.  **Safety Reward (안전 보상) - 새로 추가:**
+    * **근접 회피:** 총알이 2m 이내로 근접했다가 멀어지면 `+5` (위험 회피 성공)
+    * **무모한 기동 페널티:** 불필요하게 빠른 속도 변화 시 `-에너지_소모`
+    * **생존 보너스:** 매 스텝 생존 시 `+0.1` (장기 생존 장려)
+
+#### **피격 판정 로직 (Hit Detection)**
+```
+for each bullet:
+    distance = ||bullet_pos - drone_pos||
+    if distance < 0.5m:
+        Hit! → Episode End, Reward = -100
+    elif distance < 2.0m:
+        Near Miss → Reward = +5 (once per bullet)
+```
 
 ---
 
@@ -149,15 +196,27 @@ $$R_{total} = R_{terminal} + R_{efficiency}$$
 ---
 
 ## 6. 개발 로드맵 (Roadmap)
-1.  **Phase 1: Environment Setup**
-    * ROS2-Gazebo-PX4 연동 환경 구축.
-    * Offboard 모드로 드론 속도 제어 API 테스트.
-2.  **Phase 2: Threat Implementation**
-    * Gazebo 플러그인 또는 ROS2 노드로 'Lead Shot Turret' 구현.
-    * 드론 위치 토픽(`odom`)을 구독하여 조준하고 총알을 생성하는 로직 개발.
-3.  **Phase 3: RL Integration**
-    * Gymnasium Custom Env 작성 (`reset()`, `step()` 구현).
-    * PPO 알고리즘 연결 (Stable-baselines3).
-4.  **Phase 4: Training & Validation**
-    * 초기: 느린 탄속, 고정된 터렛 위치에서 학습.
-    * 심화: 빠른 탄속, 랜덤 터렛 위치, 학습된 모델 평가.
+1.  **Phase 1: Environment Setup** ✅ 완료
+    * ROS2-Gazebo-PX4 연동 환경 구축
+    * Offboard 모드로 드론 속도 제어 API 테스트
+    * vehicle_status_v1 토픽 연동
+
+2.  **Phase 2: Threat Implementation** ✅ 완료
+    * ROS2 노드로 투사체 시뮬레이터(`turret_sim_new.py`) 구현
+    * Lead Shot 알고리즘으로 완벽한 예측 사격
+    * 총알 물리 시뮬레이션 (위치 업데이트, 지면 충돌 판정)
+    * 총알 데이터 ROS2 토픽 발행 (`/turret/bullets`)
+
+3.  **Phase 3: RL Integration** 🔄 진행 중
+    * Gymnasium Custom Env 작성 (`reset()`, `step()` 구현)
+    * 총알 데이터 구독 및 관측 공간 통합
+    * 피격 판정 로직 추가
+    * PPO 알고리즘 연결 (Stable-baselines3)
+
+4.  **Phase 4: Training & Validation** ⏳ 대기
+    * **Curriculum Learning:**
+        * Level 1: 탄속 50m/s, 발사 속도 120 RPM
+        * Level 2: 탄속 200m/s, 발사 속도 300 RPM
+        * Level 3: 탄속 850m/s, 발사 속도 600 RPM
+    * 랜덤 터렛 위치, 학습된 모델 평가
+    * 화망 돌파율, 생존 시간, 목표 도달률 분석
