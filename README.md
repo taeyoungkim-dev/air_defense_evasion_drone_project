@@ -3,6 +3,7 @@
 > **Deep Reinforcement Learning based UAV Navigation in Hostile Environments**
 
 ## 📋 목차 (Table of Contents)
+- [빠른 실행](#-빠른-실행-quick-start)
 - [개요](#1-개요-overview)
 - [설치 가이드](#설치-installation)
 - [프로젝트 구조](#프로젝트-구조-project-structure)
@@ -10,6 +11,120 @@
 - [시나리오 및 위협 정의](#3-시나리오-및-위협-정의-scenario--threat)
 - [강화학습 설계](#4-강화학습-설계-rl-design)
 - [개발 로드맵](#6-개발-로드맵-roadmap)
+
+---
+
+## 🚀 빠른 실행 (Quick Start)
+
+학습을 시작하려면 **5개의 터미널**을 순서대로 실행하세요.
+
+### **터미널 1: Micro-XRCE-DDS-Agent (PX4-ROS2 브릿지)**
+```bash
+MicroXRCEAgent udp4 -p 8888
+```
+**역할:** PX4와 ROS2 간 메시지 변환
+
+---
+
+### **터미널 2: PX4 SITL + Gazebo (드론 시뮬레이터)**
+```bash
+cd ~/workspace/air_defense_evasion_drone_project/PX4-Autopilot
+HEADLESS=1 PX4_SIM_SPEED_FACTOR=3 make px4_sitl gazebo-classic_iris
+```
+**역할:** 드론 물리 시뮬레이션 및 비행 컨트롤러  
+**옵션:**
+- `HEADLESS=1`: Gazebo GUI 숨김 (빠른 학습)
+- `PX4_SIM_SPEED_FACTOR=3`: 시뮬레이션 속도 3배 (학습 가속)
+
+**GUI 보려면:**
+```bash
+make px4_sitl gazebo-classic_iris  # HEADLESS 제거
+```
+
+---
+
+### **터미널 3: Turret Simulator (대공포)**
+```bash
+cd ~/workspace/air_defense_evasion_drone_project/ros2_ws
+source /opt/ros/humble/setup.bash  # 또는 setup.zsh
+source install/setup.bash
+ros2 run flight_control turret_sim
+```
+**역할:** 투사체 발사 및 위협 시뮬레이션
+
+---
+
+### **터미널 4: 학습 시작 (Training)**
+```bash
+cd ~/workspace/air_defense_evasion_drone_project/ros2_ws/src/flight_control/flight_control
+source /opt/ros/humble/setup.bash
+source ~/workspace/air_defense_evasion_drone_project/ros2_ws/install/setup.bash
+python3 train.py
+```
+**역할:** PPO 알고리즘으로 AI 학습
+
+**예상 출력:**
+```
+Training Start! Logs: ./logs/20260213-..., Models: ./models/20260213-...
+>>> Resetting Environment...
+>>> Initial State - Nav: 0, Arm: 1
+>>> Phase 1: Sending Offboard heartbeat for 2 seconds...
+>>> Phase 2: Switching to Offboard mode...
+>>> Offboard mode activated!
+>>> Phase 3: Arming...
+>>> Armed successfully!
+>>> Auto-Takeoff to 2.0m...
+>>> Ready to Fly! Handing over control to AI.
+```
+
+---
+
+### **터미널 5 (선택): TensorBoard (학습 모니터링)**
+```bash
+cd ~/workspace/air_defense_evasion_drone_project/ros2_ws/src/flight_control/flight_control
+tensorboard --logdir=./logs
+```
+브라우저에서 `http://localhost:6006` 접속
+
+**확인 사항:**
+- `ep_rew_mean`: 평균 보상 (증가해야 함)
+- `ep_len_mean`: 에피소드 길이 (생존 시간)
+
+---
+
+### **🛑 학습 중지**
+
+각 터미널에서 `Ctrl+C` 입력
+
+**학습된 모델 위치:**
+```
+./models/YYYYMMDD-HHMMSS/
+├── drone_ppo_100000_steps.zip
+├── drone_ppo_200000_steps.zip
+└── drone_ppo_final.zip
+```
+
+---
+
+### **⚠️ 문제 해결**
+
+#### **문제: "Nav: 0, Arm: 0"에서 멈춤**
+```bash
+# 모든 프로세스 종료
+killall -9 px4 gzserver gzclient MicroXRCEAgent
+
+# 순서대로 재시작 (터미널 1 → 2 → 3 → 4)
+```
+
+#### **문제: "vehicle_status 토픽 없음"**
+- PX4 최신 버전은 `/fmu/out/vehicle_status_v1` 사용
+- `drone_env.py` Line 37에서 확인
+
+#### **문제: "총알 데이터 없음"**
+```bash
+# 총알 토픽 확인
+ros2 topic echo /turret/bullets --once
+```
 
 ---
 
