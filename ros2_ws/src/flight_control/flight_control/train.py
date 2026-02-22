@@ -2,7 +2,7 @@ import os
 import time
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback
-from flight_control.drone_env import DroneEnv
+from flight_control.drone_env_new import DroneEnv
 
 def main():
     # 1. 로그 및 모델 저장 경로 설정

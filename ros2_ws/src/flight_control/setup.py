@@ -25,7 +25,11 @@ setup(
     entry_points={
         'console_scripts': [
             'offboard_test = flight_control.offboard_test:main',
-            'turret_sim = flight_control.turret_sim:main'
+            'turret_sim = flight_control.turret_sim:main',
+            'turret_sim_new = flight_control.turret_sim_new:main',
+            'train_only_dodge = flight_control.train_only_dodge:main',
+            'turret_sim_new_fast = flight_control.turret_sim_new_fast:main',
+            'turret_sim_new_fast_v2 = flight_control.turret_sim_new_fast_v2:main',
         ],
     },
 )

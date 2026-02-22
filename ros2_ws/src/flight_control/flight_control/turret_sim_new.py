@@ -5,28 +5,42 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from px4_msgs.msg import VehicleOdometry
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Float32MultiArray, Bool  # Bool 추가
 import numpy as np
 import time
+import random  # [추가] 랜덤 모듈
 
 class TurretSim(Node):
     def __init__(self):
         super().__init__('turret_sim_node')
 
         # --- [1. 터렛 설정] ---
-        # 위치: (x=20, y=5) - 출발지(0,0)과 목표지(50,0) 사이에서 약간 비껴난 곳
-        self.turret_pos = np.array([20.0, 5.0, 0.0]) 
+        # 난이도 1 : 100,50
+        # 난이도 2 : 300,150
+        # 난이도 3 : 700,350
+        self.turret_pos = np.array([700.0, 0.0, 0.0])
         
-        self.bullet_speed = 50.0  # 총알 속도 (m/s) - 초기 학습용
-        self.fire_rate = 0.5      # 발사 주기 (초) - 0.5초당 1발 (120 RPM)
-        self.bullet_range = 100.0 # 사거리 (m)
-        self.dt = 0.1             # 물리 업데이트 주기 (10Hz)
+        self.bullet_speed = 350.0  # 총알 속도 (m/s)
+        self.bullet_range = 750.0  # 사거리 (m) - 터렛 거리보다 약간 크게
+        
+        # [수정 2] 랜덤 발사 간격 설정
+        self.fire_rate_min = 1.0  # 최소 1초
+        self.fire_rate_max = 3.0  # 최대 3초
+        self.next_fire_interval = 2.0  # 첫 발사 간격 초기화
+        
+        self.dt = 0.01  # 물리 업데이트 주기 (100Hz)
 
         # --- [2. 상태 변수] ---
         self.bullets = [] # 총알 리스트 [{'pos': vec3, 'vel': vec3}, ...]
         self.drone_pos = np.zeros(3)
         self.drone_vel = np.zeros(3)
         self.last_fire_time = 0.0
+        
+        # [추가] 사격 허가 플래그 (기본값: False - 안전 제일!)
+        self.is_armed = False
+
+        self.arm_time = 0.0          # 사격 허가 받은 시각
+        self.first_shot_delay = 0.0  # 첫 발 쏠 때까지 뜸들이는 시간
 
         # --- [3. 통신 설정] ---
         qos_profile = QoSProfile(
@@ -37,6 +51,10 @@ class TurretSim(Node):
 
         self.odom_sub = self.create_subscription(
             VehicleOdometry, '/fmu/out/vehicle_odometry', self.odom_callback, qos_profile)
+        
+        # [추가] 사격 허가 명령 수신
+        self.enable_sub = self.create_subscription(
+            Bool, '/turret/enable', self.enable_callback, 10)
 
         # [중요] AI에게 보낼 총알 데이터
         # 데이터 형식: [pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, ...] (6개씩 반복)
@@ -52,16 +70,37 @@ class TurretSim(Node):
     def odom_callback(self, msg):
         self.drone_pos = np.array([msg.position[0], msg.position[1], msg.position[2]])
         self.drone_vel = np.array([msg.velocity[0], msg.velocity[1], msg.velocity[2]])
+    
+    def enable_callback(self, msg):
+        """사격 허가 스위치 콜백"""
+        was_armed = self.is_armed
+        self.is_armed = msg.data
+        
+        # Arming 시 첫 발사 간격 초기화
+        if not was_armed and self.is_armed:
+            self.next_fire_interval = random.uniform(self.fire_rate_min, self.fire_rate_max)
+            self.last_fire_time = time.time()  # 타이머 리셋
+        
+        # 상태가 바뀌면 로그 출력
+        if was_armed != self.is_armed:
+            status = "🔫 ARMED" if self.is_armed else "🛑 DISARMED"
+            self.get_logger().info(f"Turret Status: {status}")
 
     def update_callback(self):
         current_time = time.time()
 
         # -------------------------------------------------
         # 1. 발사 로직 (Fire Logic)
+        # [수정 3] 랜덤 간격 적용
+        # 고정된 self.fire_rate 대신 매번 바뀌는 self.next_fire_interval 사용
         # -------------------------------------------------
-        if current_time - self.last_fire_time > self.fire_rate:
+        if self.is_armed and (current_time - self.last_fire_time > self.next_fire_interval):
             self.fire_bullet()
             self.last_fire_time = current_time
+            
+            # 다음 발사는 언제 쏠지 랜덤으로 결정 (주사위 굴리기 🎲)
+            self.next_fire_interval = random.uniform(self.fire_rate_min, self.fire_rate_max)
+            # self.get_logger().info(f"Next shot in {self.next_fire_interval:.2f} sec")
 
         # -------------------------------------------------
         # 2. 총알 물리 업데이트 (Physics)
@@ -75,7 +114,7 @@ class TurretSim(Node):
             
             # 유효성 검사 (땅에 박히거나 사거리 벗어나면 제거)
             # NED 좌표계에서: z < 0 (공중), z = 0 (지면), z > 0 (지하)
-            if b['pos'][2] < 0.0:  # 공중에 있는 총알만 체크
+            if b['pos'][2] <= 0.0:  # 공중에 있는 총알만 체크
                 dist = np.linalg.norm(b['pos'] - self.turret_pos)
                 
                 if dist < self.bullet_range:  # 사거리 내에 있으면 유지
@@ -148,7 +187,7 @@ class TurretSim(Node):
         b_marker.id = 1
         b_marker.type = Marker.POINTS
         b_marker.action = Marker.ADD
-        b_marker.scale.x = 0.3; b_marker.scale.y = 0.3 # 총알 크기
+        b_marker.scale.x = 0.1; b_marker.scale.y = 0.1 # 총알 크기
         b_marker.color.a = 1.0; b_marker.color.r = 1.0; b_marker.color.g = 0.0; b_marker.color.b = 0.0 # 빨간색
 
         for b in self.bullets:
