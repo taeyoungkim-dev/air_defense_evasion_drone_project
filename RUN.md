@@ -104,7 +104,7 @@ source /opt/ros/humble/setup.bash  # zsh 사용자는 setup.zsh
 source install/setup.bash
 
 # 터렛 시뮬레이터 실행
-ros2 run flight_control turret_sim
+ros2 run flight_control turret_sim_new
 ```
 
 **예상 출력:**

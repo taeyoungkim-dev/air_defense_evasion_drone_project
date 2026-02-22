@@ -11,7 +11,9 @@ PX4-Autopilot/
 ros2_ws/build/
 ros2_ws/install/
 ros2_ws/log/
-
+ros2_ws/src/flight_control/flight_control/logs
+ros2_ws/src/flight_control/flight_control/models
+ros2_ws/src/flight_control/flight_control/models_only_dodge
 # ============================================
 # ROS2 Workspace - External Packages
 # ============================================

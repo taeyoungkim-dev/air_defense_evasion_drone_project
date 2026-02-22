@@ -48,7 +48,7 @@ make px4_sitl gazebo-classic_iris  # HEADLESS 제거
 cd ~/workspace/air_defense_evasion_drone_project/ros2_ws
 source /opt/ros/humble/setup.bash  # 또는 setup.zsh
 source install/setup.bash
-ros2 run flight_control turret_sim
+ros2 run flight_control turret_sim_new
 ```
 **역할:** 투사체 발사 및 위협 시뮬레이션
 
