@@ -11,13 +11,19 @@ PX4-Autopilot/
 ros2_ws/build/
 ros2_ws/install/
 ros2_ws/log/
-ros2_ws/src/flight_control/flight_control/logs
-ros2_ws/src/flight_control/flight_control/models
-ros2_ws/src/flight_control/flight_control/models_only_dodge
+
 # ============================================
 # ROS2 Workspace - External Packages
 # ============================================
 ros2_ws/src/px4_msgs/
+
+# ============================================
+# Training Artifacts (local only)
+# ============================================
+ros2_ws/src/flight_control/flight_control/logs/
+ros2_ws/src/flight_control/flight_control/logs_only_dodge/
+ros2_ws/src/flight_control/flight_control/models/
+ros2_ws/src/flight_control/flight_control/models_only_dodge/
 
 # ============================================
 # Python
@@ -35,6 +41,8 @@ build/
 .coverage
 .tox/
 *.log
+.mypy_cache/
+.ruff_cache/
 
 # ============================================
 # Virtual Environments
@@ -49,6 +57,7 @@ ENV/
 # ============================================
 .vscode/
 .idea/
+.cursor/
 *.swp
 *.swo
 *~
@@ -58,7 +67,6 @@ ENV/
 # Gazebo
 # ============================================
 .gazebo/
-*.log
 
 # ============================================
 # Temporary and Cache Files
