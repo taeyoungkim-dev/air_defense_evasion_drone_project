@@ -91,7 +91,16 @@ air_defense_evasion_drone_project/
 Large dependencies (**PX4-Autopilot**, **Micro-XRCE-DDS-Agent**, **px4_msgs**) are installed locally and excluded from git — see [INSTALL.md](INSTALL.md).
 
 ---
+## RL Design (Summary)
 
+**Observation (12-D):** home-relative position, self velocity, nearest threat bullet relative position & velocity  
+
+**Action (3-D):** normalized velocity commands → PX4 Offboard velocity control  
+
+**Reward (Lazy Survivor):** alive bonus, distance-from-home penalty outside a safe radius, energy penalty for unnecessary motion, large death penalty on hit / crash / boundary exit  
+
+**Hit detection:** continuous collision check along each bullet segment per simulation step
+---
 ## Getting Started
 
 1. **[Installation Guide](INSTALL.md)** — ROS 2, Gazebo, PX4, Python packages  
@@ -114,16 +123,4 @@ cd ros2_ws/src/flight_control/flight_control && python3 train_only_dodge.py
 ```
 
 Full troubleshooting, TensorBoard, and parameter tuning: **[RUN.md](RUN.md)**.
-
----
-
-## RL Design (Summary)
-
-**Observation (12-D):** home-relative position, self velocity, nearest threat bullet relative position & velocity  
-
-**Action (3-D):** normalized velocity commands → PX4 Offboard velocity control  
-
-**Reward (Lazy Survivor):** alive bonus, distance-from-home penalty outside a safe radius, energy penalty for unnecessary motion, large death penalty on hit / crash / boundary exit  
-
-**Hit detection:** continuous collision check along each bullet segment per simulation step  
 
